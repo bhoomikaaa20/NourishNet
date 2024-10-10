@@ -1,0 +1,96 @@
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    background-color: #fff;
+    border-bottom: 1px solid #ccc;
+}
+
+.navbar .logo h1 {
+    font-size: 24px;
+    color: #333;
+    margin: 0;
+}
+
+.nav-menu {
+    list-style: none;
+    display: flex;
+    gap: 20px;
+}
+
+.nav-menu li {
+    position: relative; /* Necessary for dropdown positioning */
+}
+
+.nav-menu li a {
+    text-decoration: none;
+    color: #333;
+    font-weight: bold;
+    padding: 5px 0; /* Adds some padding to the links */
+}
+
+.nav-menu li a:hover {
+    color: #007BFF;
+}
+
+.dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: #fff;
+    list-style: none;
+    padding: 10px 0;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+    border: 1px solid #ccc;
+    z-index: 1000;
+}
+
+.dropdown-menu li {
+    width: 150px;
+    padding: 0;
+}
+
+.dropdown-menu li a {
+    padding: 10px 20px;
+    color: #333;
+    font-weight: normal;
+    white-space: nowrap; /* Prevents text wrapping */
+}
+
+.dropdown-menu li a:hover {
+    background-color: #f8f8f8;
+    color: #007BFF;
+}
+
+.nav-menu li:hover .dropdown-menu {
+    display: block; /* Displays the dropdown on hover */
+}
+
+.navbar-donate .donate-button {
+    background-color: #C2185B;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 20px;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.navbar-donate .donate-button:hover {
+    background-color: #D81B60;
+}
+
+.auth-buttons button {
+    background-color: #007BFF;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.auth-buttons button:hover {
+    background-color: #0056b3;
+}
