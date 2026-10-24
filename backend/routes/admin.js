@@ -1,15 +1,18 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const { authenticateToken } = require("../auth");
+const { authenticate, ENV_ADMIN_ID } = require("../auth");
+const { requirePermission, ROLES } = require("../rbac");
 const FoodRequest = require("../models/model");
 const FoodDonation = require("../models/donateModel");
 const Connections = require("../models/connectionsModel");
 const Contact = require("../models/contactModel");
 const Volunteer = require("../models/volunteerModel");
+const User = require("../models/userModel");
 const { escapeRegex, str } = require("../utils/validate");
 
 const router = express.Router();
-router.use(authenticateToken);
+// Every admin route needs a session; each route then checks its own permission.
+router.use(authenticate);
 
 // One config entry per manageable collection keeps the CRUD handlers generic.
 const COLLECTIONS = {
@@ -124,7 +127,7 @@ const dailyTrend = async (days) => {
   });
 };
 
-router.get("/stats", async (req, res) => {
+router.get("/stats", requirePermission("dashboard:read"), async (req, res) => {
   try {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -176,7 +179,163 @@ const csvCell = (value) => {
   return '"' + s.replace(/"/g, '""') + '"';
 };
 
-router.get("/:type/export", getCollection, async (req, res) => {
+// Show which account made a submission, if any.
+const attachAccounts = async (items) => {
+  const ids = items.map((i) => i.user).filter(Boolean);
+  if (!ids.length) return;
+  const users = await User.find({ _id: { $in: ids } }).select("email name").lean();
+  const map = new Map(users.map((u) => [String(u._id), u]));
+  for (const i of items) if (i.user) i.account = map.get(String(i.user)) || null;
+};
+
+// Show which request claimed a donation (and vice versa) by tracking code.
+const attachLinks = async (type, items) => {
+  if (["requests", "donations", "volunteers"].includes(type)) await attachAccounts(items);
+  if (type === "donations") {
+    const ids = items.map((i) => i.claimedBy).filter(Boolean);
+    if (!ids.length) return;
+    const reqs = await FoodRequest.find({ _id: { $in: ids } }).select("trackingId name").lean();
+    const map = new Map(reqs.map((r) => [String(r._id), r]));
+    for (const i of items) if (i.claimedBy) i.claimedByRequest = map.get(String(i.claimedBy)) || null;
+  } else if (type === "requests") {
+    const ids = items.map((i) => i.donation).filter(Boolean);
+    if (!ids.length) return;
+    const dons = await FoodDonation.find({ _id: { $in: ids } }).select("trackingId foodType quantity").lean();
+    const map = new Map(dons.map((d) => [String(d._id), d]));
+    for (const i of items) if (i.donation) i.linkedDonation = map.get(String(i.donation)) || null;
+  }
+};
+
+// ---- User accounts ----
+// Declared before the generic /:type routes so "users" never falls through to them.
+const USERS = {
+  search: ["name", "email", "phone", "city"],
+  statuses: User.STATUSES,
+  defaultStatus: "active",
+  csv: ["name", "email", "phone", "city", "role", "status", "lastLoginAt", "createdAt"],
+};
+
+const userQuery = (q) => {
+  const query = buildQuery(USERS, q);
+  const role = str(q.role);
+  if (!ROLES.includes(role)) return query;
+  return { $and: [...(query.$and || []), { role }] };
+};
+
+const countBy = async (Model, ids) => {
+  const rows = await Model.aggregate([{ $match: { user: { $in: ids } } }, { $group: { _id: "$user", n: { $sum: 1 } } }]);
+  return new Map(rows.map((r) => [String(r._id), r.n]));
+};
+
+// Returns a reason the change is not allowed, or null. Admins can't lock themselves
+// out, and the last active admin account can't be removed unless the environment
+// admin (who can't be locked out) is the one doing it.
+const blockedAdminChange = async (req, target, removesAdmin) => {
+  if (String(target._id) === req.user.id) return "You can't change or delete your own account here.";
+  if (!removesAdmin || target.role !== "admin" || target.status !== "active" || req.user.id === ENV_ADMIN_ID) return null;
+  const others = await User.countDocuments({ _id: { $ne: target._id }, role: "admin", status: "active" });
+  return others ? null : "At least one active admin account must remain.";
+};
+
+const withoutInternals = (u) => {
+  delete u.tokensValidAfter;
+  return u;
+};
+
+router.get("/users/export", requirePermission("users:read", "submissions:export"), async (req, res) => {
+  try {
+    const rows = await User.find(userQuery(req.query)).sort(sortFor(req.query)).limit(10000).lean();
+    const lines = [USERS.csv.join(",")];
+    for (const row of rows) lines.push(USERS.csv.map((f) => csvCell(row[f])).join(","));
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="users.csv"');
+    res.send(lines.join("\r\n"));
+  } catch (error) {
+    console.error("Error exporting users:", error.message);
+    res.status(500).json({ message: "Failed to export" });
+  }
+});
+
+router.get("/users", requirePermission("users:read"), async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
+    const query = userQuery(req.query);
+    const [items, total] = await Promise.all([
+      User.find(query).sort(sortFor(req.query)).skip((page - 1) * limit).limit(limit).lean(),
+      User.countDocuments(query),
+    ]);
+    const ids = items.map((u) => u._id);
+    const [donations, requests] = await Promise.all([countBy(FoodDonation, ids), countBy(FoodRequest, ids)]);
+    for (const u of items) {
+      withoutInternals(u);
+      u.donationCount = donations.get(String(u._id)) || 0;
+      u.requestCount = requests.get(String(u._id)) || 0;
+      u.isSelf = String(u._id) === req.user.id;
+    }
+    res.json({ items, total, page, pages: Math.max(Math.ceil(total / limit), 1) });
+  } catch (error) {
+    console.error("Error listing users:", error.message);
+    res.status(500).json({ message: "Failed to fetch data" });
+  }
+});
+
+router.patch("/users/:id", requirePermission("users:update"), validId, async (req, res) => {
+  const update = {};
+  if (req.body?.status !== undefined) {
+    const status = str(req.body.status);
+    if (!User.STATUSES.includes(status)) {
+      return res.status(400).json({ message: "Status must be one of: " + User.STATUSES.join(", ") });
+    }
+    update.status = status;
+  }
+  if (req.body?.role !== undefined) {
+    const role = str(req.body.role);
+    if (!ROLES.includes(role)) return res.status(400).json({ message: "Role must be one of: " + ROLES.join(", ") });
+    update.role = role;
+  }
+  if (!Object.keys(update).length) return res.status(400).json({ message: "Nothing to update" });
+
+  try {
+    const target = await User.findById(req.params.id).lean();
+    if (!target) return res.status(404).json({ message: "Not found" });
+    const removesAdmin = (update.role && update.role !== "admin") || (update.status && update.status !== "active");
+    const blocked = await blockedAdminChange(req, target, removesAdmin);
+    if (blocked) return res.status(409).json({ message: blocked });
+
+    // Ending existing sessions makes role and suspension changes apply on every device.
+    const doc = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: { ...update, tokensValidAfter: new Date() } },
+      { new: true, runValidators: true }
+    ).lean();
+    res.json(withoutInternals(doc));
+  } catch (error) {
+    console.error("Error updating user:", error.message);
+    res.status(500).json({ message: "Failed to update" });
+  }
+});
+
+router.delete("/users/:id", requirePermission("users:delete"), validId, async (req, res) => {
+  try {
+    const target = await User.findById(req.params.id).lean();
+    if (!target) return res.status(404).json({ message: "Not found" });
+    const blocked = await blockedAdminChange(req, target, true);
+    if (blocked) return res.status(409).json({ message: blocked });
+
+    await User.deleteOne({ _id: target._id });
+    // Submissions stay for the food bank's records; they just become anonymous.
+    await Promise.all(
+      [FoodRequest, FoodDonation, Volunteer].map((M) => M.updateMany({ user: target._id }, { $set: { user: null } }))
+    );
+    res.json({ message: "Deleted" });
+  } catch (error) {
+    console.error("Error deleting user:", error.message);
+    res.status(500).json({ message: "Failed to delete" });
+  }
+});
+
+router.get("/:type/export", requirePermission("submissions:export"), getCollection, async (req, res) => {
   try {
     const { cfg } = req;
     const rows = await cfg.Model.find(buildQuery(cfg, req.query))
@@ -194,25 +353,8 @@ router.get("/:type/export", getCollection, async (req, res) => {
   }
 });
 
-// Show which request claimed a donation (and vice versa) by tracking code.
-const attachLinks = async (type, items) => {
-  if (type === "donations") {
-    const ids = items.map((i) => i.claimedBy).filter(Boolean);
-    if (!ids.length) return;
-    const reqs = await FoodRequest.find({ _id: { $in: ids } }).select("trackingId name").lean();
-    const map = new Map(reqs.map((r) => [String(r._id), r]));
-    for (const i of items) if (i.claimedBy) i.claimedByRequest = map.get(String(i.claimedBy)) || null;
-  } else if (type === "requests") {
-    const ids = items.map((i) => i.donation).filter(Boolean);
-    if (!ids.length) return;
-    const dons = await FoodDonation.find({ _id: { $in: ids } }).select("trackingId foodType quantity").lean();
-    const map = new Map(dons.map((d) => [String(d._id), d]));
-    for (const i of items) if (i.donation) i.linkedDonation = map.get(String(i.donation)) || null;
-  }
-};
-
 // ---- List with search / filter / pagination ----
-router.get("/:type", getCollection, async (req, res) => {
+router.get("/:type", requirePermission("submissions:read"), getCollection, async (req, res) => {
   try {
     const { cfg } = req;
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
@@ -240,7 +382,7 @@ router.get("/:type", getCollection, async (req, res) => {
 });
 
 // ---- Update status / admin note ----
-router.patch("/:type/:id", getCollection, validId, async (req, res) => {
+router.patch("/:type/:id", requirePermission("submissions:update"), getCollection, validId, async (req, res) => {
   const { cfg } = req;
   if (!cfg.statuses) return res.status(400).json({ message: "This collection cannot be edited" });
 
@@ -281,7 +423,7 @@ router.patch("/:type/:id", getCollection, validId, async (req, res) => {
 });
 
 // ---- Delete ----
-router.delete("/:type/:id", getCollection, validId, async (req, res) => {
+router.delete("/:type/:id", requirePermission("submissions:delete"), getCollection, validId, async (req, res) => {
   try {
     const doc = await req.cfg.Model.findByIdAndDelete(req.params.id);
     if (!doc) return res.status(404).json({ message: "Not found" });

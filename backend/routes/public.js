@@ -7,8 +7,14 @@ const Connections = require("../models/connectionsModel");
 const Contact = require("../models/contactModel");
 const Volunteer = require("../models/volunteerModel");
 const { rules, validate, str, parseDate, escapeRegex } = require("../utils/validate");
+const { optionalAuth, ENV_ADMIN_ID } = require("../auth");
 
 const router = express.Router();
+
+// Submissions made while signed in are linked to the account so they appear under
+// "My account". Signing in is never required, and the link comes only from the
+// verified session, never from the request body.
+const ownerOf = (req) => (req.user && req.user.id !== ENV_ADMIN_ID ? req.user.id : null);
 
 // Public write endpoints are the spam/abuse surface, so they get a tighter limit.
 const submitLimiter = rateLimit({
@@ -81,12 +87,12 @@ const toRequestDoc = (clean) => {
   return doc;
 };
 
-router.post("/api/request-food", submitLimiter, async (req, res) => {
+router.post("/api/request-food", submitLimiter, optionalAuth, async (req, res) => {
   const { ok, errors, clean } = validate(req.body, requestSchema);
   if (!ok) return invalid(res, errors);
 
   try {
-    const doc = await FoodRequest.create(toRequestDoc(clean));
+    const doc = await FoodRequest.create({ ...toRequestDoc(clean), user: ownerOf(req) });
     res.status(200).json({
       message: "Request received and stored successfully",
       trackingId: doc.trackingId,
@@ -97,7 +103,7 @@ router.post("/api/request-food", submitLimiter, async (req, res) => {
   }
 });
 
-router.post("/api/donate-food", submitLimiter, async (req, res) => {
+router.post("/api/donate-food", submitLimiter, optionalAuth, async (req, res) => {
   const { ok, errors, clean } = validate(req.body, donationSchema);
   if (!ok) return invalid(res, errors);
 
@@ -106,7 +112,7 @@ router.post("/api/donate-food", submitLimiter, async (req, res) => {
     if (clean.availableUntil) clean.availableUntil = parseDate(clean.availableUntil);
     else delete clean.availableUntil;
     if (!clean.dietType) delete clean.dietType;
-    const doc = await FoodDonation.create(clean);
+    const doc = await FoodDonation.create({ ...clean, user: ownerOf(req) });
     res.status(200).json({
       message: "Donation received and stored successfully",
       trackingId: doc.trackingId,
@@ -148,13 +154,13 @@ router.post("/api/connections", submitLimiter, async (req, res) => {
   }
 });
 
-router.post("/api/volunteers", submitLimiter, async (req, res) => {
+router.post("/api/volunteers", submitLimiter, optionalAuth, async (req, res) => {
   const { ok, errors, clean } = validate(req.body, volunteerSchema);
   if (!ok) return invalid(res, errors);
 
   try {
     clean.interests = [...new Set(clean.interests || [])];
-    await Volunteer.create(clean);
+    await Volunteer.create({ ...clean, user: ownerOf(req) });
     res.status(201).json({ message: "Thanks for signing up! Our volunteer team will be in touch soon." });
   } catch (error) {
     console.error("Error saving volunteer:", error.message);
@@ -203,7 +209,7 @@ router.get("/api/listings", async (req, res) => {
   }
 });
 
-router.post("/api/listings/:id/claim", submitLimiter, async (req, res) => {
+router.post("/api/listings/:id/claim", submitLimiter, optionalAuth, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(404).json({ message: "This listing is no longer available." });
   }
@@ -228,6 +234,7 @@ router.post("/api/listings/:id/claim", submitLimiter, async (req, res) => {
       urgency: "immediate",
       donation: donation._id,
       city: clean.city || donation.city,
+      user: ownerOf(req),
     });
     res.status(200).json({
       message: "You've claimed this food. Our team will confirm pickup or delivery shortly.",

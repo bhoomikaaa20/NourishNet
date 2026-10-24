@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { parseError } from "./api";
+import { useAuth } from "./components/AuthContext";
 import useForm from "./components/useForm";
 import Modal from "./components/Modal";
 import ListingCard from "./components/ListingCard";
@@ -93,7 +94,20 @@ const FindFood = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [claiming, setClaiming] = useState(null);
+  const [pendingCount, setPendingCount] = useState(0);
   const requestId = useRef(0);
+  const { can } = useAuth();
+  const isStaff = can("dashboard:read");
+
+  // Only donations approved by the team are public. Staff get a nudge when some are
+  // waiting, since "nothing listed" is otherwise indistinguishable from "nothing donated".
+  useEffect(() => {
+    if (!isStaff) return;
+    api
+      .get("/api/admin/stats")
+      .then(({ data }) => setPendingCount(data.donations.pending))
+      .catch(() => setPendingCount(0));
+  }, [isStaff]);
 
   useEffect(() => {
     const t = setTimeout(() => setCityQuery(filters.city.trim()), 350);
@@ -202,6 +216,15 @@ const FindFood = () => {
             </span>
             <h2>{hasFilters ? "No matches right now" : "No food listed right now"}</h2>
             <p className="muted">New donations are added as soon as our team approves them. You can also tell us what you need and we'll reach out.</p>
+            {isStaff && pendingCount > 0 && (
+              <p className="alert alert-success" role="status">
+                <i className="fa-solid fa-circle-info" aria-hidden="true" />
+                <span>
+                  {pendingCount} {pendingCount === 1 ? "donation is" : "donations are"} waiting for approval.{" "}
+                  <Link to="/dashboard">Review in the dashboard</Link> to list {pendingCount === 1 ? "it" : "them"} here.
+                </span>
+              </p>
+            )}
             <Link to="/request-food" className="btn btn-primary">
               Request food assistance
             </Link>

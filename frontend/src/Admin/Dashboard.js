@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import api, { parseError } from "../api";
+import { useAuth } from "../components/AuthContext";
 import { useToast } from "../components/Toast";
 import { foodMeta, dietMeta } from "../components/foodMeta";
 import TrendChart from "./TrendChart";
@@ -8,12 +9,17 @@ const REQUEST_STATUSES = ["pending", "approved", "completed", "rejected"];
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "");
 const titleCase = (s) => String(s ?? "").replace(/_/g, " ");
+const ROLES = ["user", "admin"];
+const accountDetail = ["Account", "account", (v) => (v ? `${v.name} (${v.email})` : "Guest (not signed in)")];
 
 // Per-collection table layout. `details` are the extra fields shown when a row is expanded.
+// `permission` is what the signed-in account needs to see the tab (the server checks it too).
+// Column renderers receive (row, ctx) where ctx carries row actions.
 const TABS = {
   requests: {
     label: "Requests",
     icon: "fa-bowl-food",
+    permission: "submissions:read",
     statuses: REQUEST_STATUSES,
     editable: true,
     columns: [
@@ -22,11 +28,12 @@ const TABS = {
       { key: "contactNumber", label: "Contact" },
       { key: "urgency", label: "Urgency", render: (r) => <span className={`pill pill-${r.urgency}`}>{titleCase(r.urgency)}</span> },
     ],
-    details: [["Email", "email"], ["Address", "address"], ["City", "city"], ["Household size", "householdSize"], ["Notes", "notes"]],
+    details: [["Email", "email"], ["Address", "address"], ["City", "city"], ["Household size", "householdSize"], ["Notes", "notes"], accountDetail],
   },
   donations: {
     label: "Donations",
     icon: "fa-hand-holding-heart",
+    permission: "submissions:read",
     statuses: REQUEST_STATUSES,
     editable: true,
     columns: [
@@ -39,11 +46,16 @@ const TABS = {
       {
         key: "listing",
         label: "Listing",
+        // Mirrors the public listing rule in backend/routes/public.js: approved, unclaimed, not expired.
         render: (r) =>
           r.claimedBy ? (
             <span className="pill pill-claimed">Reserved</span>
+          ) : r.status === "approved" && r.availableUntil && new Date(r.availableUntil) < new Date() ? (
+            <span className="pill pill-expired" title="Past its good-until date, so hidden from Find Food">Expired</span>
           ) : r.status === "approved" ? (
             <span className="pill pill-live">Live</span>
+          ) : r.status === "pending" ? (
+            <span className="muted" title="Approve this donation to list it on Find Food">Not listed</span>
           ) : (
             <span className="muted">—</span>
           ),
@@ -55,11 +67,13 @@ const TABS = {
       ["Diet", "dietType", (v) => dietMeta(v)?.label],
       ["Good until", "availableUntil", (v) => fmtDate(v)],
       ["Notes", "notes"],
+      accountDetail,
     ],
   },
   contacts: {
     label: "Messages",
     icon: "fa-envelope",
+    permission: "submissions:read",
     statuses: ["new", "resolved"],
     editable: true,
     noNote: true,
@@ -73,6 +87,7 @@ const TABS = {
   volunteers: {
     label: "Volunteers",
     icon: "fa-people-group",
+    permission: "submissions:read",
     statuses: ["new", "active", "inactive"],
     editable: true,
     noNote: true,
@@ -87,17 +102,59 @@ const TABS = {
       ["Interests", "interests", (v) => (v || []).join(", ")],
       ["Has vehicle", "hasVehicle", (v) => (v ? "Yes" : "No")],
       ["Message", "message"],
+      accountDetail,
     ],
   },
   connections: {
     label: "Subscribers",
     icon: "fa-users",
+    permission: "submissions:read",
     statuses: null,
     editable: false,
     columns: [{ key: "email", label: "Email" }],
     details: [],
   },
+  users: {
+    label: "Users",
+    icon: "fa-user-gear",
+    permission: "users:read",
+    deletePermission: "users:delete",
+    updatePermission: "users:update",
+    statuses: ["active", "suspended"],
+    editable: true,
+    noNote: true,
+    columns: [
+      { key: "name", label: "Name", render: (r) => (r.isSelf ? `${r.name} (you)` : r.name) },
+      { key: "email", label: "Email" },
+      {
+        key: "role",
+        label: "Role",
+        render: (r, ctx) =>
+          r.isSelf || !ctx.can("users:update") ? (
+            <span className={`pill role-${r.role}`}>{r.role}</span>
+          ) : (
+            <select className={`status-select role-${r.role}`} value={r.role} onChange={(e) => ctx.changeRole(r, e.target.value)} aria-label="Role">
+              {ROLES.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
+            </select>
+          ),
+      },
+    ],
+    details: [
+      ["Phone", "phone"],
+      ["City", "city"],
+      ["Donations", "donationCount"],
+      ["Requests", "requestCount"],
+      ["Last sign-in", "lastLoginAt", (v) => fmtDate(v)],
+    ],
+  },
 };
+
+const canDelete = (cfg, row, can) => !row.isSelf && can(cfg.deletePermission || "submissions:delete");
+const canUpdate = (cfg, row, can) => !row.isSelf && can(cfg.updatePermission || "submissions:update");
 
 const StatCard = ({ icon, label, value, sub, tone }) => (
   <div className={`stat-card ${tone || ""}`}>
@@ -114,6 +171,7 @@ const StatCard = ({ icon, label, value, sub, tone }) => (
 
 const RowDetails = ({ type, cfg, row, onSaved, onDelete }) => {
   const toast = useToast();
+  const { can } = useAuth();
   const [note, setNote] = useState(row.adminNote || "");
   const [saving, setSaving] = useState(false);
 
@@ -184,7 +242,7 @@ const RowDetails = ({ type, cfg, row, onSaved, onDelete }) => {
         </div>
       )}
 
-      {cfg.editable && !cfg.noNote && (
+      {cfg.editable && !cfg.noNote && canUpdate(cfg, row, can) && (
         <div className="note-editor">
           <label htmlFor={`note-${row._id}`}>Note for the submitter (shown on the tracking page)</label>
           <textarea id={`note-${row._id}`} rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} />
@@ -196,18 +254,22 @@ const RowDetails = ({ type, cfg, row, onSaved, onDelete }) => {
         </div>
       )}
 
-      <div className="row-actions">
-        <button type="button" className="btn btn-danger btn-sm" onClick={() => onDelete(row)}>
-          <i className="fa-solid fa-trash" aria-hidden="true" /> Delete
-        </button>
-      </div>
+      {canDelete(cfg, row, can) && (
+        <div className="row-actions">
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => onDelete(row)}>
+            <i className="fa-solid fa-trash" aria-hidden="true" /> Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 };
 
 const Dashboard = () => {
   const toast = useToast();
-  const [tab, setTab] = useState("requests");
+  const { can } = useAuth();
+  const visibleTabs = Object.entries(TABS).filter(([, t]) => can(t.permission));
+  const [tab, setTab] = useState(visibleTabs[0]?.[0] || "requests");
   const [stats, setStats] = useState(null);
   const [data, setData] = useState({ items: [], total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -288,8 +350,23 @@ const Dashboard = () => {
     }
   };
 
+  const changeRole = async (row, next) => {
+    const previous = row.role;
+    if (next === "admin" && !window.confirm(`Make ${row.email} an admin? They will be able to see all records and manage users.`)) return;
+    replaceRow({ _id: row._id, role: next });
+    try {
+      await api.patch(`/api/admin/users/${row._id}`, { role: next });
+      toast.success(`${row.email} is now ${next === "admin" ? "an admin" : "a user"}`);
+    } catch (e) {
+      replaceRow({ _id: row._id, role: previous });
+      toast.error(parseError(e).message);
+    }
+  };
+  const ctx = { can, changeRole };
+
   const deleteRow = async (row) => {
-    if (!window.confirm("Delete this record permanently? This cannot be undone.")) return;
+    const what = tab === "users" ? "this account? Their submissions are kept but no longer linked to it." : "this record permanently? This cannot be undone.";
+    if (!window.confirm(`Delete ${what}`)) return;
     try {
       await api.delete(`/api/admin/${tab}/${row._id}`);
       toast.success("Record deleted");
@@ -348,7 +425,7 @@ const Dashboard = () => {
         {stats?.trend && <TrendChart data={stats.trend} />}
 
         <div className="tabs" role="tablist">
-          {Object.entries(TABS).map(([key, t]) => (
+          {visibleTabs.map(([key, t]) => (
             <button key={key} type="button" role="tab" aria-selected={tab === key} className={`tab${tab === key ? " active" : ""}`} onClick={() => switchTab(key)}>
               <i className={`fa-solid ${t.icon}`} aria-hidden="true" /> {t.label}
             </button>
@@ -375,9 +452,11 @@ const Dashboard = () => {
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
             </select>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={exportCsv}>
-              <i className="fa-solid fa-download" aria-hidden="true" /> Export CSV
-            </button>
+            {can("submissions:export") && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={exportCsv}>
+                <i className="fa-solid fa-download" aria-hidden="true" /> Export CSV
+              </button>
+            )}
           </div>
 
           {error && (
@@ -423,12 +502,12 @@ const Dashboard = () => {
                       <tr className={expanded === row._id ? "expanded" : ""}>
                         {cfg.columns.map((c) => (
                           <td key={c.key} data-label={c.label}>
-                            {c.render ? c.render(row) : row[c.key]}
+                            {c.render ? c.render(row, ctx) : row[c.key]}
                           </td>
                         ))}
                         {cfg.statuses && (
                           <td data-label="Status">
-                            <select className={`status-select status-${row.status}`} value={row.status} onChange={(e) => changeStatus(row, e.target.value)} aria-label="Status">
+                            <select className={`status-select status-${row.status}`} value={row.status} onChange={(e) => changeStatus(row, e.target.value)} aria-label="Status" disabled={!canUpdate(cfg, row, can)}>
                               {cfg.statuses.map((s) => (
                                 <option key={s} value={s}>
                                   {titleCase(s)}

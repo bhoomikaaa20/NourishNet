@@ -5,16 +5,24 @@ if (!process.env.MONGO_URL) {
   console.error("Missing required environment variable MONGO_URL. See .env.example.");
   process.exit(1);
 }
-// Without these the public site still works; only admin login is disabled.
-const adminMissing = ["SECRET_KEY", "ADMIN_EMAIL"].filter((k) => !process.env[k]);
-if (!process.env.ADMIN_PASSWORD_HASH && !process.env.ADMIN_PASSWORD) adminMissing.push("ADMIN_PASSWORD_HASH");
-if (adminMissing.length) {
-  console.warn(`Admin login disabled. Missing: ${adminMissing.join(", ")}. See .env.example.`);
+// Without these the public site still works; only sign-in is affected.
+if (!process.env.SECRET_KEY) {
+  console.warn("Sign-in disabled (user accounts and admin). Missing: SECRET_KEY. See .env.example.");
+} else {
+  const adminMissing = ["ADMIN_EMAIL"].filter((k) => !process.env[k]);
+  if (!process.env.ADMIN_PASSWORD_HASH && !process.env.ADMIN_PASSWORD) adminMissing.push("ADMIN_PASSWORD_HASH");
+  if (adminMissing.length) {
+    console.warn(
+      `Environment admin login disabled. Missing: ${adminMissing.join(", ")}. ` +
+        "Accounts promoted with `node generate.js promote <email>` can still administer the site."
+    );
+  }
 }
 
 const createApp = require("./app");
 const FoodRequest = require("./models/model");
 const FoodDonation = require("./models/donateModel");
+const User = require("./models/userModel");
 const { generateTrackingId } = require("./models/trackingId");
 
 const PORT = process.env.PORT || 8087;
@@ -32,7 +40,7 @@ mongoose
   .connect(process.env.MONGO_URL, { serverSelectionTimeoutMS: 15000 })
   .then(async () => {
     console.log("Connected to MongoDB");
-    await Promise.all([FoodRequest.init(), FoodDonation.init()]);
+    await Promise.all([FoodRequest.init(), FoodDonation.init(), User.init()]);
     await backfillTrackingIds(FoodRequest, "REQ");
     await backfillTrackingIds(FoodDonation, "DON");
     createApp().listen(PORT, () => console.log(`Server is running on port ${PORT}`));

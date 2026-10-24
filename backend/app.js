@@ -5,6 +5,7 @@ const rateLimit = require("express-rate-limit");
 
 const publicRoutes = require("./routes/public");
 const adminRoutes = require("./routes/admin");
+const accountRoutes = require("./routes/account");
 const { router: authRoutes } = require("./auth");
 
 const createApp = () => {
@@ -38,6 +39,7 @@ const createApp = () => {
 
   app.use("/api/auth", authRoutes);
   app.use("/api/admin", adminRoutes);
+  app.use("/api/me", accountRoutes);
   app.use(publicRoutes);
 
   app.use((req, res) => res.status(404).json({ message: "Not found" }));

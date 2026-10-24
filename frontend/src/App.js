@@ -13,16 +13,22 @@ import Volunteer from "./Volunteer";
 import NotFound from "./NotFound";
 import Dashboard from "./Admin/Dashboard";
 import Login from "./Admin/Login";
+import Register from "./Register";
+import Account from "./Account";
+import Forbidden from "./Forbidden";
 import Home from "./Home";
 import { AuthProvider, useAuth } from "./components/AuthContext";
 import { ToastProvider } from "./components/Toast";
 
-// Sends visitors to /login (remembering where they were headed) unless an admin session exists.
-const RequireAdmin = ({ children }) => {
-  const { isLoggedIn, checking } = useAuth();
+// Sends visitors to /login (remembering where they were headed) unless signed in,
+// and shows "no access" to signed-in accounts that lack the permission.
+// The server enforces the same permissions; this only keeps the UI honest.
+const RequirePermission = ({ permission, children }) => {
+  const { isLoggedIn, can, checking } = useAuth();
   const location = useLocation();
   if (checking) return <div className="page-loading">Checking your session…</div>;
-  return isLoggedIn ? children : <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!isLoggedIn) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  return can(permission) ? children : <Forbidden />;
 };
 
 const ScrollToTop = () => {
@@ -56,12 +62,21 @@ function App() {
                 <Route path="/track" element={<TrackStatus />} />
                 <Route path="/contact" element={<Contact />} />
                 <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<Register />} />
+                <Route
+                  path="/account"
+                  element={
+                    <RequirePermission permission="profile:read">
+                      <Account />
+                    </RequirePermission>
+                  }
+                />
                 <Route
                   path="/dashboard"
                   element={
-                    <RequireAdmin>
+                    <RequirePermission permission="dashboard:read">
                       <Dashboard />
-                    </RequireAdmin>
+                    </RequirePermission>
                   }
                 />
                 <Route path="*" element={<NotFound />} />

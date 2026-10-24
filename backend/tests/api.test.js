@@ -237,6 +237,22 @@ test("listings: only approved, unclaimed, unexpired donations are public; claimi
   assert.equal(res.status, 404);
 });
 
+test("listings eligibility: pending hidden, approved shown (incl. legacy docs), expired hidden", async () => {
+  const col = mongoose.connection.collection("fooddonations");
+  const base = { name: "E", contactNumber: "1234567", email: "e@x.co", address: "1 St", quantity: 3, createdAt: new Date() };
+  const future = new Date(Date.now() + 86400000);
+  const { insertedIds } = await col.insertMany([
+    { ...base, foodType: "bread", city: "Eligtown", status: "pending", availableUntil: future },
+    // Legacy shape: approved, but no claimedBy / availableUntil / dietType fields at all.
+    { ...base, foodType: "bread", city: "Eligtown", status: "approved" },
+    { ...base, foodType: "bread", city: "Eligtown", status: "approved", claimedBy: null, availableUntil: new Date(Date.now() - 60000) },
+  ]);
+  const res = await request(app).get("/api/listings?city=Eligtown");
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.items.map((i) => String(i.id)), [String(insertedIds[1])]);
+  await col.deleteMany({ city: "Eligtown" });
+});
+
 test("volunteers: validated sign-up and admin management", async () => {
   let res = await request(app).post("/api/volunteers").send({ name: "V", email: "v@x.co", phone: "1234567", city: "Pune", availability: "weekends", interests: ["hacking"] });
   assert.equal(res.status, 400);
@@ -254,6 +270,135 @@ test("volunteers: validated sign-up and admin management", async () => {
   assert.equal(res.body.volunteers.total, 1);
   assert.equal(res.body.trend.length, 14);
   assert.ok(res.body.trend[13].donations >= 1);
+});
+
+test("rbac: users register, own their submissions, and can't reach admin routes", async () => {
+  const signup = { name: "Uma", email: "Uma@Example.com", password: "long enough pw" };
+  let res = await request(app).post("/api/auth/register").send({ ...signup, password: "short" });
+  assert.equal(res.status, 400);
+  assert.ok(res.body.errors.password);
+  res = await request(app).post("/api/auth/register").send({ ...signup, email: "admin@test.com" });
+  assert.equal(res.status, 409);
+  // A role in the body is ignored: self-registration always creates a plain user.
+  res = await request(app).post("/api/auth/register").send({ ...signup, role: "admin" });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.user.role, "user");
+  assert.equal(res.body.admin, undefined);
+  assert.ok(res.body.user.permissions.includes("submissions:own:read"));
+  assert.ok(!res.body.user.permissions.includes("users:read"));
+  res = await request(app).post("/api/auth/register").send(signup);
+  assert.equal(res.status, 409);
+
+  res = await request(app).post("/api/auth/login").send({ email: "uma@example.com", password: "long enough pw" });
+  assert.equal(res.status, 200);
+  const userToken = res.body.token;
+  const asUser = (method, path) => request(app)[method](path).set("Authorization", "Bearer " + userToken);
+
+  // Least privilege: authenticated but not authorised -> 403 on every admin route.
+  for (const [method, path] of [
+    ["get", "/api/admin/stats"], ["get", "/api/admin/donations"], ["get", "/api/admin/donations/export"],
+    ["get", "/api/admin/users"], ["patch", "/api/admin/users/" + new mongoose.Types.ObjectId()],
+    ["delete", "/api/admin/requests/" + new mongoose.Types.ObjectId()],
+  ]) {
+    assert.equal((await asUser(method, path)).status, 403, `${method} ${path}`);
+  }
+
+  // Submissions made while signed in are linked; anonymous ones are not.
+  res = await asUser("post", "/api/donate-food").send({ ...donation, name: "Mine" });
+  assert.equal(res.status, 200);
+  const mine = res.body.trackingId;
+  await request(app).post("/api/donate-food").send({ ...donation, name: "Anon", email: "uma@example.com" });
+  res = await asUser("post", "/api/request-food").send(foodRequest);
+  const myRequest = res.body.trackingId;
+
+  res = await asUser("get", "/api/me/donations");
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.items.map((d) => d.trackingId), [mine]);
+  assert.equal(res.body.items[0].user, undefined);
+  res = await asUser("get", "/api/me/requests");
+  assert.deepEqual(res.body.items.map((r) => r.trackingId), [myRequest]);
+  assert.equal((await asUser("get", "/api/me/nope")).status, 404);
+  assert.equal((await request(app).get("/api/me/donations")).status, 401);
+
+  // A user can't cancel someone else's record; ids of other records look "Not found".
+  const otherId = (await authed("get", "/api/admin/donations?q=Anon")).body.items[0]._id;
+  assert.equal((await asUser("delete", "/api/me/donations/" + otherId)).status, 404);
+  const myId = (await asUser("get", "/api/me/donations")).body.items[0]._id;
+
+  // Once the team has approved it, the user can no longer withdraw it.
+  await authed("patch", "/api/admin/donations/" + myId).send({ status: "approved" });
+  assert.equal((await asUser("delete", "/api/me/donations/" + myId)).status, 409);
+  await authed("patch", "/api/admin/donations/" + myId).send({ status: "pending" });
+  assert.equal((await asUser("delete", "/api/me/donations/" + myId)).status, 200);
+  assert.equal((await asUser("get", "/api/me/donations")).body.total, 0);
+
+  // Admin sees which account made a submission.
+  res = await authed("get", "/api/admin/requests?q=" + myRequest);
+  assert.equal(res.body.items[0].account.email, "uma@example.com");
+
+  // Profile: editable fields only; role can't be escalated through it.
+  res = await asUser("patch", "/api/me").send({ name: "Uma R", city: "Pune", role: "admin", email: "x@y.co" });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.user.name, "Uma R");
+  assert.equal(res.body.user.role, "user");
+  assert.equal(res.body.user.email, "uma@example.com");
+
+  // Password change revokes older sessions and returns a working new token.
+  res = await asUser("post", "/api/me/password").send({ currentPassword: "wrong", newPassword: "another long pw" });
+  assert.equal(res.status, 400);
+  await new Promise((r) => setTimeout(r, 1100)); // iat has one-second resolution
+  res = await asUser("post", "/api/me/password").send({ currentPassword: "long enough pw", newPassword: "another long pw" });
+  assert.equal(res.status, 200);
+  assert.equal((await asUser("get", "/api/me")).status, 401);
+  const fresh = res.body.token;
+  assert.equal((await request(app).get("/api/me").set("Authorization", "Bearer " + fresh)).status, 200);
+
+  // The environment admin has no profile.
+  assert.equal((await authed("get", "/api/me")).status, 404);
+});
+
+test("rbac: admins manage users; changes apply immediately", async () => {
+  await request(app).post("/api/auth/register").send({ name: "Bo", email: "bo@example.com", password: "bo password 1" });
+  let res = await authed("get", "/api/admin/users?q=bo@");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.total, 1);
+  const bo = res.body.items[0];
+  assert.equal(bo.passwordHash, undefined);
+  assert.equal(bo.status, "active");
+
+  res = await authed("get", "/api/admin/users/export");
+  assert.equal(res.status, 200);
+  assert.doesNotMatch(res.text, /passwordHash|\$2[aby]\$/);
+
+  assert.equal((await authed("patch", "/api/admin/users/" + bo._id).send({ role: "owner" })).status, 400);
+
+  // Promote Bo: his next request already has admin permissions.
+  res = await authed("patch", "/api/admin/users/" + bo._id).send({ role: "admin" });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.role, "admin");
+  await new Promise((r) => setTimeout(r, 1100));
+  const boToken = (await request(app).post("/api/auth/login").send({ email: "bo@example.com", password: "bo password 1" })).body.token;
+  const asBo = (method, path) => request(app)[method](path).set("Authorization", "Bearer " + boToken);
+  assert.equal((await asBo("get", "/api/admin/stats")).status, 200);
+
+  // Bo can't demote, suspend or delete himself, or remove the last DB admin.
+  assert.equal((await asBo("patch", "/api/admin/users/" + bo._id).send({ role: "user" })).status, 409);
+  assert.equal((await asBo("delete", "/api/admin/users/" + bo._id)).status, 409);
+
+  // Suspending ends his session at once and blocks new logins.
+  res = await authed("patch", "/api/admin/users/" + bo._id).send({ status: "suspended" });
+  assert.equal(res.status, 200);
+  assert.equal((await asBo("get", "/api/admin/stats")).status, 401);
+  res = await request(app).post("/api/auth/login").send({ email: "bo@example.com", password: "bo password 1" });
+  assert.equal(res.status, 403);
+
+  // Deleting an account keeps its submissions, just unlinked.
+  const uma = (await authed("get", "/api/admin/users?q=uma")).body.items[0];
+  assert.equal(uma.requestCount, 1);
+  assert.equal((await authed("delete", "/api/admin/users/" + uma._id)).status, 200);
+  res = await authed("get", "/api/admin/requests?q=ravi");
+  assert.ok(res.body.items.length >= 1);
+  assert.ok(res.body.items.every((i) => !i.user));
 });
 
 test("health reports database connectivity", async () => {

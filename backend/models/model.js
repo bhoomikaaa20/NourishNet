@@ -22,6 +22,8 @@ const foodRequestSchema = new mongoose.Schema(
     donation: { type: mongoose.Schema.Types.ObjectId, ref: "FoodDonation", default: null },
     status: { type: String, enum: STATUSES, default: "pending", index: true },
     adminNote: { type: String, trim: true, default: "" },
+    // Set when submitted while signed in; anonymous submissions stay null.
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true },
     trackingId: {
       type: String,
       unique: true,

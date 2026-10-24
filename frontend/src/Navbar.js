@@ -21,8 +21,11 @@ const MENUS = [
   },
 ];
 
+// Must match the hover media query for dropdowns in styles.css.
+const HOVER_MENUS = "(hover: hover) and (min-width: 901px)";
+
 const Navbar = () => {
-  const { isLoggedIn, logout } = useAuth();
+  const { isLoggedIn, user, can, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(null);
   const location = useLocation();
@@ -77,7 +80,15 @@ const Navbar = () => {
               const open = openDropdown === m.key;
               const active = m.items.some((i) => i.to === location.pathname);
               return (
-                <li key={m.key} className={`dropdown${open ? " open" : ""}`}>
+                <li
+                  key={m.key}
+                  className={`dropdown${open ? " open" : ""}`}
+                  // On hover-capable desktops, hovering another menu replaces a click-opened one
+                  // so two menus never overlap. Touch/mobile keeps click-only behaviour.
+                  onMouseEnter={() => {
+                    if (openDropdown && openDropdown !== m.key && window.matchMedia?.(HOVER_MENUS).matches) setOpenDropdown(null);
+                  }}
+                >
                   <button
                     type="button"
                     className={`dropdown-toggle${active ? " active" : ""}`}
@@ -111,7 +122,12 @@ const Navbar = () => {
             <li>
               <NavLink to="/contact">Contact</NavLink>
             </li>
-            {isLoggedIn && (
+            {isLoggedIn && user.hasProfile && can("profile:read") && (
+              <li>
+                <NavLink to="/account">My account</NavLink>
+              </li>
+            )}
+            {can("dashboard:read") && (
               <li>
                 <NavLink to="/dashboard">Dashboard</NavLink>
               </li>
@@ -127,9 +143,9 @@ const Navbar = () => {
                 Logout
               </button>
             ) : (
-              <Link to="/login" className="btn btn-ghost btn-sm" aria-label="Admin login">
-                <i className="fa-solid fa-user-shield" aria-hidden="true" />
-                <span className="nav-login-text">Admin</span>
+              <Link to="/login" className="btn btn-ghost btn-sm" aria-label="Sign in">
+                <i className="fa-solid fa-user" aria-hidden="true" />
+                <span className="nav-login-text">Sign in</span>
               </Link>
             )}
           </div>

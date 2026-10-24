@@ -7,7 +7,8 @@ export const API_URL = (
 
 const TOKEN_KEY = "nourishnet_admin_token";
 
-// sessionStorage keeps the admin session scoped to the tab.
+// sessionStorage keeps the session (user or admin) scoped to the tab. The key name
+// predates user accounts and is kept so existing sessions survive the upgrade.
 export const tokenStore = {
   get() {
     try {
@@ -34,19 +35,26 @@ export const tokenStore = {
 
 const api = axios.create({ baseURL: API_URL, timeout: 30000 });
 
+// Routes that require a session. Public form submissions also receive the token so
+// that, when signed in, they are saved to the user's account (the server never
+// requires it there).
+const PROTECTED = ["/api/admin", "/api/me", "/api/auth/me"];
+const SESSION_AWARE = [...PROTECTED, "/api/donate-food", "/api/request-food", "/api/volunteers", "/api/listings/"];
+const matches = (url, prefixes) => prefixes.some((p) => String(url || "").startsWith(p));
+
 api.interceptors.request.use((config) => {
   const token = tokenStore.get();
-  if (token && config.url.startsWith("/api/admin")) {
+  if (token && !config.headers.Authorization && matches(config.url, SESSION_AWARE)) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// An expired/invalid admin session is announced so AuthContext can log out.
+// An expired/invalid session is announced so AuthContext can log out.
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error.response?.status === 401 && error.config?.url?.startsWith("/api/admin")) {
+    if (error.response?.status === 401 && matches(error.config?.url, PROTECTED)) {
       window.dispatchEvent(new Event("nourishnet:session-expired"));
     }
     return Promise.reject(error);

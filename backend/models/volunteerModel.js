@@ -15,6 +15,8 @@ const volunteerSchema = new mongoose.Schema(
     hasVehicle: { type: Boolean, default: false },
     message: { type: String, trim: true, default: "" },
     status: { type: String, enum: STATUSES, default: "new", index: true },
+    // Set when submitted while signed in; anonymous sign-ups stay null.
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true },
   },
   { timestamps: true }
 );

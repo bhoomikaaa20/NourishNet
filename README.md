@@ -17,8 +17,8 @@ npm run dev              # nodemon; `npm start` for production
 | Variable | Purpose |
 |---|---|
 | `MONGO_URL` | MongoDB connection string (required) |
-| `SECRET_KEY` | JWT signing secret. Generate with `node generate.js` (required) |
-| `ADMIN_EMAIL` | Admin login email (required) |
+| `SECRET_KEY` | JWT signing secret for every sign-in (users and admins). Generate with `node generate.js` (required) |
+| `ADMIN_EMAIL` | Built-in admin login email. Optional if a database account has been promoted to admin |
 | `ADMIN_PASSWORD_HASH` | bcrypt hash of the admin password: `node generate.js hash '<password>'`. Wrap the value in single quotes in `.env`. A plain `ADMIN_PASSWORD` is still accepted but discouraged |
 | `CLIENT_ORIGIN` | Comma-separated frontend origins allowed by CORS. If unset, all origins are allowed |
 | `PORT` | Defaults to 8087 |
@@ -39,8 +39,36 @@ Public:
 - `POST /api/listings/:id/claim`: reserves a listing atomically (409 if someone else got it first) and creates a linked food request
 - `POST /api/track` (`{ trackingId, email }`), `GET /api/impact` (aggregate numbers), `GET /api/health` (includes DB status)
 
-Admin (`Authorization: Bearer <token>` from `POST /api/auth/login`):
+Sign-in is optional for the public endpoints. When a valid session token is sent, donations, requests, claims and volunteer sign-ups are linked to that account.
+
+Auth: `POST /api/auth/register` (`name`, `email`, `password`, optional `phone`, `city`; always creates a `user`), `POST /api/auth/login`, `GET /api/auth/me`. Responses include `user.role` and `user.permissions`.
+
+Signed-in user (`Authorization: Bearer <token>`):
+`GET|PATCH /api/me` (name, phone, city), `POST /api/me/password` (`currentPassword`, `newPassword`; signs out other sessions), `GET /api/me/donations`, `GET /api/me/requests`, `DELETE /api/me/:type/:id` (withdraw your own submission while it is still pending and unreserved).
+
+Admin:
 `GET /api/admin/stats` (includes a 14-day trend), `GET /api/admin/:type` (`q`, `status`, `sort`, `page`, `limit`), `GET /api/admin/:type/export` (CSV), `PATCH /api/admin/:type/:id` (`status`, `adminNote`, `releaseClaim`), `DELETE /api/admin/:type/:id`, where `:type` is one of `requests | donations | contacts | volunteers | connections`.
+Users: `GET /api/admin/users` (`q`, `status`, `role`, …), `GET /api/admin/users/export`, `PATCH /api/admin/users/:id` (`role`, `status: active | suspended`), `DELETE /api/admin/users/:id` (the user's submissions are kept but unlinked).
+
+### Roles and permissions
+
+Permissions are defined in [backend/rbac.js](backend/rbac.js). Routes check permissions, not role names.
+
+| Permission | user | admin |
+|---|:-:|:-:|
+| `profile:read`, `profile:update`: own profile and password | ✓ | ✓ |
+| `submissions:own:read`: own donations and requests | ✓ | ✓ |
+| `submissions:own:cancel`: withdraw own *pending* submissions | ✓ | ✓ |
+| `dashboard:read`: stats and trends | | ✓ |
+| `submissions:read` / `update` / `delete` / `export`: all records | | ✓ |
+| `users:read` / `update` / `delete`: manage accounts and roles | | ✓ |
+
+- No session gets **401**. A session without the permission gets **403**. Another user's record gets **404**, because ownership is part of the query.
+- Self-registration always creates a `user`. Admins are appointed by an admin on the dashboard's **Users** tab, or with `node generate.js promote <email> [admin|user]`.
+- Role and status are read from the database on every request, so promotions, demotions and suspensions take effect immediately.
+- Admins can't change or delete their own account, and the last active database admin can't be removed except by the built-in admin.
+- The built-in admin (`ADMIN_EMAIL`) has no database record and no profile. Sessions issued before roles existed keep working until they expire.
+- Submissions are linked only by the verified session, never by email. Anonymous submissions made before an account existed are not shown under *My account*. They can still be followed with the tracking code.
 
 ### Donation lifecycle
 
@@ -51,7 +79,7 @@ Admin (`Authorization: Bearer <token>` from `POST /api/auth/login`):
 
 ### Deploying to Render
 
-1. In the Render service's **Environment**, set `MONGO_URL` (required), plus `SECRET_KEY`, `ADMIN_EMAIL` and `ADMIN_PASSWORD_HASH` for admin login. Without the admin variables the public site still works, but admin login returns 503.
+1. In the Render service's **Environment**, set `MONGO_URL` (required), plus `SECRET_KEY` for sign-in, and `ADMIN_EMAIL` and `ADMIN_PASSWORD_HASH` for the built-in admin. Without `SECRET_KEY` the public site still works, but sign-in returns 503.
 2. In MongoDB Atlas, under **Network Access**, allow Render to connect (`0.0.0.0/0`, or Render's outbound IPs).
 3. Deploy. `GET /api/health` should return `{"status":"ok","db":"connected"}`.
 
