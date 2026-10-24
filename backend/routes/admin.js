@@ -1,6 +1,6 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const { authenticate, ENV_ADMIN_ID } = require("../auth");
+const { authenticate } = require("../auth");
 const { requirePermission, ROLES } = require("../rbac");
 const FoodRequest = require("../models/model");
 const FoodDonation = require("../models/donateModel");
@@ -228,11 +228,10 @@ const countBy = async (Model, ids) => {
 };
 
 // Returns a reason the change is not allowed, or null. Admins can't lock themselves
-// out, and the last active admin account can't be removed unless the environment
-// admin (who can't be locked out) is the one doing it.
+// out, and the last active admin account can't be removed.
 const blockedAdminChange = async (req, target, removesAdmin) => {
   if (String(target._id) === req.user.id) return "You can't change or delete your own account here.";
-  if (!removesAdmin || target.role !== "admin" || target.status !== "active" || req.user.id === ENV_ADMIN_ID) return null;
+  if (!removesAdmin || target.role !== "admin" || target.status !== "active") return null;
   const others = await User.countDocuments({ _id: { $ne: target._id }, role: "admin", status: "active" });
   return others ? null : "At least one active admin account must remain.";
 };

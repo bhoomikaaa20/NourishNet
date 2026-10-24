@@ -7,14 +7,14 @@ const Connections = require("../models/connectionsModel");
 const Contact = require("../models/contactModel");
 const Volunteer = require("../models/volunteerModel");
 const { rules, validate, str, parseDate, escapeRegex } = require("../utils/validate");
-const { optionalAuth, ENV_ADMIN_ID } = require("../auth");
+const { optionalAuth } = require("../auth");
 
 const router = express.Router();
 
 // Submissions made while signed in are linked to the account so they appear under
 // "My account". Signing in is never required, and the link comes only from the
 // verified session, never from the request body.
-const ownerOf = (req) => (req.user && req.user.id !== ENV_ADMIN_ID ? req.user.id : null);
+const ownerOf = (req) => (req.user ? req.user.id : null);
 
 // Public write endpoints are the spam/abuse surface, so they get a tighter limit.
 const submitLimiter = rateLimit({

@@ -5,18 +5,14 @@ if (!process.env.MONGO_URL) {
   console.error("Missing required environment variable MONGO_URL. See .env.example.");
   process.exit(1);
 }
-// Without these the public site still works; only sign-in is affected.
+// Without it the public site still works; only sign-in (users and admins) is disabled.
 if (!process.env.SECRET_KEY) {
-  console.warn("Sign-in disabled (user accounts and admin). Missing: SECRET_KEY. See .env.example.");
-} else {
-  const adminMissing = ["ADMIN_EMAIL"].filter((k) => !process.env[k]);
-  if (!process.env.ADMIN_PASSWORD_HASH && !process.env.ADMIN_PASSWORD) adminMissing.push("ADMIN_PASSWORD_HASH");
-  if (adminMissing.length) {
-    console.warn(
-      `Environment admin login disabled. Missing: ${adminMissing.join(", ")}. ` +
-        "Accounts promoted with `node generate.js promote <email>` can still administer the site."
-    );
-  }
+  console.warn("Sign-in disabled. Missing: SECRET_KEY. See .env.example.");
+}
+// Admins are database users with role "admin"; these variables are no longer read.
+const obsolete = ["ADMIN_EMAIL", "ADMIN_PASSWORD", "ADMIN_PASSWORD_HASH"].filter((k) => process.env[k]);
+if (obsolete.length) {
+  console.warn(`Ignoring obsolete ${obsolete.join(", ")}; you can delete them. Admins are promoted with \`node generate.js promote <email>\`.`);
 }
 
 const createApp = require("./app");
@@ -46,6 +42,14 @@ mongoose
     createApp().listen(PORT, () => console.log(`Server is running on port ${PORT}`));
   })
   .catch((err) => {
-    console.error("Startup failed (check MONGO_URL and Atlas network access):", err.message);
+    console.error("Startup failed: could not connect to MongoDB.", err.message);
+    if (err.name === "MongooseServerSelectionError" || /whitelist|ENOTFOUND|ETIMEDOUT|ECONNREFUSED/i.test(err.message)) {
+      console.error(
+        "Atlas is unreachable from this host. In Atlas > Security > Network Access, allow this server's IP " +
+          "(on Render: 0.0.0.0/0, or the service's outbound IPs), and check that the cluster is not paused."
+      );
+    } else if (/auth/i.test(err.message)) {
+      console.error("Atlas rejected the credentials. Check the user/password in MONGO_URL (URL-encode special characters).");
+    }
     process.exit(1);
   });

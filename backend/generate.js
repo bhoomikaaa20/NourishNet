@@ -1,18 +1,9 @@
 // Usage:
 //   node generate.js                         -> prints a random JWT secret for SECRET_KEY
-//   node generate.js hash <pass>             -> prints a bcrypt hash for ADMIN_PASSWORD_HASH
 //   node generate.js promote <email> [role]  -> sets an existing account's role (default: admin; use "user" to demote)
 const crypto = require("crypto");
 
-if (process.argv[2] === "hash") {
-  const password = process.argv[3];
-  if (!password) {
-    console.error("Usage: node generate.js hash <password>");
-    process.exit(1);
-  }
-  const bcrypt = require("bcryptjs");
-  console.log(`ADMIN_PASSWORD_HASH=${bcrypt.hashSync(password, 10)}`);
-} else if (process.argv[2] === "promote") {
+if (process.argv[2] === "promote") {
   require("dotenv").config();
   const mongoose = require("mongoose");
   const User = require("./models/userModel");

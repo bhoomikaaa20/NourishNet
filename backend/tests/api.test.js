@@ -1,9 +1,6 @@
 // Integration tests. Requires a MongoDB reachable at TEST_MONGO_URL
 // (default mongodb://127.0.0.1:27017/nourishnet_test). Never point this at production.
 process.env.SECRET_KEY = "test-secret";
-process.env.ADMIN_EMAIL = "Admin@Test.com";
-process.env.ADMIN_PASSWORD = "correct horse battery";
-delete process.env.ADMIN_PASSWORD_HASH;
 delete process.env.CLIENT_ORIGIN;
 
 const { test, before, after } = require("node:test");
@@ -32,6 +29,13 @@ before(async () => {
   await mongoose.connect(URL);
   await mongoose.connection.dropDatabase();
   await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
+  // Admins are ordinary database users with role "admin" (as `generate.js promote` sets).
+  await mongoose.model("User").create({
+    name: "Admin",
+    email: "admin@test.com",
+    passwordHash: require("bcryptjs").hashSync("correct horse battery", 10),
+    role: "admin",
+  });
   app = createApp();
 });
 after(async () => {
@@ -353,8 +357,15 @@ test("rbac: users register, own their submissions, and can't reach admin routes"
   const fresh = res.body.token;
   assert.equal((await request(app).get("/api/me").set("Authorization", "Bearer " + fresh)).status, 200);
 
-  // The environment admin has no profile.
-  assert.equal((await authed("get", "/api/me")).status, 404);
+  // Admins are database users with a profile and admin permissions.
+  res = await authed("get", "/api/me");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.user.role, "admin");
+  assert.ok(res.body.user.permissions.includes("users:update"));
+
+  // Tokens without a database user id (the removed env-admin format) are rejected.
+  const legacy = require("jsonwebtoken").sign({ email: "admin@test.com", isAdmin: true }, "test-secret", { algorithm: "HS256" });
+  assert.equal((await request(app).get("/api/admin/stats").set("Authorization", "Bearer " + legacy)).status, 401);
 });
 
 test("rbac: admins manage users; changes apply immediately", async () => {

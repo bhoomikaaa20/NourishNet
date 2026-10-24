@@ -25,7 +25,7 @@ const MENUS = [
 const HOVER_MENUS = "(hover: hover) and (min-width: 901px)";
 
 const Navbar = () => {
-  const { isLoggedIn, user, can, logout } = useAuth();
+  const { isLoggedIn, can, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(null);
   const location = useLocation();
@@ -122,7 +122,7 @@ const Navbar = () => {
             <li>
               <NavLink to="/contact">Contact</NavLink>
             </li>
-            {isLoggedIn && user.hasProfile && can("profile:read") && (
+            {isLoggedIn && can("profile:read") && (
               <li>
                 <NavLink to="/account">My account</NavLink>
               </li>

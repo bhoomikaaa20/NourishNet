@@ -10,20 +10,11 @@ const { rules, validate, str } = require("./utils/validate");
 const router = express.Router();
 
 const SECRET_KEY = process.env.SECRET_KEY;
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
-// The admin configured through environment variables has no database record.
-const ENV_ADMIN_ID = "env-admin";
 
-// Prefer ADMIN_PASSWORD_HASH (bcrypt). A plain ADMIN_PASSWORD is still accepted
-// so existing deployments keep working, but it is hashed in memory at startup
-// and compared in constant time via bcrypt.
-let adminHash = process.env.ADMIN_PASSWORD_HASH || "";
-if (!adminHash && process.env.ADMIN_PASSWORD) {
-  adminHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10);
-  console.warn(
-    "ADMIN_PASSWORD is set in plain text. Use ADMIN_PASSWORD_HASH instead (see `node generate.js hash <password>`)."
-  );
-}
+// Every account, admins included, is a MongoDB user; the role on that record decides
+// what it may do (see rbac.js). The first admin is appointed with
+// `node generate.js promote <email>`.
+
 // Compared against when the email is wrong, so response time doesn't reveal it.
 const DUMMY_HASH = bcrypt.hashSync("not-the-password", 10);
 
@@ -43,9 +34,7 @@ const registerLimiter = rateLimit({
   message: { message: "Too many sign-ups from this network. Please try again later." },
 });
 
-// Accounts need only SECRET_KEY; the environment admin additionally needs ADMIN_EMAIL + hash.
 const isConfigured = () => Boolean(SECRET_KEY);
-const envAdminConfigured = () => Boolean(SECRET_KEY && ADMIN_EMAIL && adminHash);
 const notConfigured = (res) =>
   res.status(503).json({ message: "Sign-in is not configured on the server yet." });
 
@@ -63,11 +52,10 @@ const toPublicUser = (u) => ({
   phone: u.phone || "",
   city: u.city || "",
   role: u.role,
-  hasProfile: (u._id || u.id) !== ENV_ADMIN_ID,
+  // Always true now that every account is stored; kept so existing clients keep working.
+  hasProfile: true,
   permissions: permissionsFor(u.role),
 });
-
-const envAdmin = () => ({ id: ENV_ADMIN_ID, email: ADMIN_EMAIL, name: "Administrator", role: "admin" });
 
 // `admin` is kept in responses for clients written before accounts existed.
 const sessionBody = (user, token) => {
@@ -98,7 +86,6 @@ router.post("/register", registerLimiter, async (req, res) => {
 
   const email = clean.email.toLowerCase();
   const taken = { message: "An account with this email already exists.", errors: { email: "An account with this email already exists" } };
-  if (email === ADMIN_EMAIL) return res.status(409).json(taken);
 
   try {
     // Role is never taken from the request: every self-registered account is a plain user.
@@ -126,12 +113,6 @@ router.post("/login", loginLimiter, async (req, res) => {
   const invalid = () => res.status(401).json({ message: "Invalid email or password" });
 
   try {
-    if (envAdminConfigured() && email !== "" && email === ADMIN_EMAIL) {
-      if (!(await bcrypt.compare(password, adminHash))) return invalid();
-      const admin = envAdmin();
-      return res.json(sessionBody(admin, signToken(ENV_ADMIN_ID, admin.email, admin.role)));
-    }
-
     const user = email ? await User.findOne({ email }).select("+passwordHash") : null;
     const passwordOk = await bcrypt.compare(password, user ? user.passwordHash : DUMMY_HASH);
     if (!user || !passwordOk) return invalid();
@@ -149,12 +130,9 @@ router.post("/login", loginLimiter, async (req, res) => {
 
 // Resolves a token to the current account, or null. Role and status are read
 // from the database on every request so changes take effect immediately.
+// Tokens without a database user id (e.g. from the removed environment admin) are rejected.
 const resolveUser = async (payload) => {
-  // Tokens issued before accounts existed carry only { email, isAdmin }.
-  const sub = payload.sub || (payload.isAdmin ? ENV_ADMIN_ID : null);
-  if (sub === ENV_ADMIN_ID) {
-    return envAdminConfigured() && payload.email === ADMIN_EMAIL ? envAdmin() : null;
-  }
+  const sub = payload.sub;
   if (!sub || !mongoose.isValidObjectId(sub)) return null;
   const user = await User.findById(sub).lean();
   if (!user || user.status !== "active") return null;
@@ -216,9 +194,7 @@ module.exports = {
   authenticateToken: authenticate,
   optionalAuth,
   isConfigured,
-  envAdminConfigured,
   signToken,
   sessionBody,
   PASSWORD_RULE,
-  ENV_ADMIN_ID,
 };

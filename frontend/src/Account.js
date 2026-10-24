@@ -183,20 +183,6 @@ const Submissions = ({ kind }) => {
 const Account = () => {
   const { user, can } = useAuth();
 
-  // The built-in administrator is configured on the server and has no profile.
-  if (!user.hasProfile) {
-    return (
-      <main className="section center">
-        <p className="eyebrow">Account</p>
-        <h1>Administrator account</h1>
-        <p className="muted">This administrator is configured on the server and has no profile to edit.</p>
-        <Link to="/dashboard" className="btn btn-primary">
-          Open dashboard
-        </Link>
-      </main>
-    );
-  }
-
   return (
     <main className="dashboard">
       <div className="dashboard-inner">

@@ -1,7 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
-const { authenticate, ENV_ADMIN_ID, PASSWORD_RULE, sessionBody, signToken } = require("../auth");
+const { authenticate, PASSWORD_RULE, sessionBody, signToken } = require("../auth");
 const { requirePermission } = require("../rbac");
 const FoodRequest = require("../models/model");
 const FoodDonation = require("../models/donateModel");
@@ -14,12 +14,6 @@ const { rules, validate, str } = require("../utils/validate");
 const router = express.Router();
 router.use(authenticate);
 
-// The environment admin has no stored profile or submissions.
-const requireProfile = (req, res, next) =>
-  req.user.id === ENV_ADMIN_ID
-    ? res.status(404).json({ message: "This administrator account has no profile." })
-    : next();
-
 const invalid = (res, errors) =>
   res.status(400).json({ message: "Please correct the highlighted fields.", errors });
 
@@ -29,11 +23,11 @@ const profileSchema = {
   city: rules.optionalText("City", { max: 80 }),
 };
 
-router.get("/", requirePermission("profile:read"), requireProfile, (req, res) => {
+router.get("/", requirePermission("profile:read"), (req, res) => {
   res.json(sessionBody(req.user));
 });
 
-router.patch("/", requirePermission("profile:update"), requireProfile, async (req, res) => {
+router.patch("/", requirePermission("profile:update"), async (req, res) => {
   // Only these fields are editable here; email, role and status are not.
   const { ok, errors, clean } = validate({ ...req.user, ...req.body }, profileSchema);
   if (!ok) return invalid(res, errors);
@@ -51,7 +45,7 @@ router.patch("/", requirePermission("profile:update"), requireProfile, async (re
   }
 });
 
-router.post("/password", requirePermission("profile:update"), requireProfile, async (req, res) => {
+router.post("/password", requirePermission("profile:update"), async (req, res) => {
   const error = PASSWORD_RULE("New password")(req.body?.newPassword);
   if (error) return invalid(res, { newPassword: error });
   try {
@@ -115,7 +109,7 @@ const getOwn = (req, res, next) => {
   return req.own ? next() : res.status(404).json({ message: "Not found" });
 };
 
-router.get("/:type", requirePermission("submissions:own:read"), requireProfile, getOwn, async (req, res) => {
+router.get("/:type", requirePermission("submissions:own:read"), getOwn, async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
@@ -132,7 +126,7 @@ router.get("/:type", requirePermission("submissions:own:read"), requireProfile, 
 });
 
 // Withdraw a submission that the team hasn't acted on yet.
-router.delete("/:type/:id", requirePermission("submissions:own:cancel"), requireProfile, getOwn, async (req, res) => {
+router.delete("/:type/:id", requirePermission("submissions:own:cancel"), getOwn, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: "Not found" });
   const { Model } = req.own;
   // Legacy records without a status count as pending, matching the admin dashboard.

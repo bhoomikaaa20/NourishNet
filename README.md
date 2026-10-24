@@ -18,8 +18,6 @@ npm run dev              # nodemon; `npm start` for production
 |---|---|
 | `MONGO_URL` | MongoDB connection string (required) |
 | `SECRET_KEY` | JWT signing secret for every sign-in (users and admins). Generate with `node generate.js` (required) |
-| `ADMIN_EMAIL` | Built-in admin login email. Optional if a database account has been promoted to admin |
-| `ADMIN_PASSWORD_HASH` | bcrypt hash of the admin password: `node generate.js hash '<password>'`. Wrap the value in single quotes in `.env`. A plain `ADMIN_PASSWORD` is still accepted but discouraged |
 | `CLIENT_ORIGIN` | Comma-separated frontend origins allowed by CORS. If unset, all origins are allowed |
 | `PORT` | Defaults to 8087 |
 
@@ -66,8 +64,8 @@ Permissions are defined in [backend/rbac.js](backend/rbac.js). Routes check perm
 - No session gets **401**. A session without the permission gets **403**. Another user's record gets **404**, because ownership is part of the query.
 - Self-registration always creates a `user`. Admins are appointed by an admin on the dashboard's **Users** tab, or with `node generate.js promote <email> [admin|user]`.
 - Role and status are read from the database on every request, so promotions, demotions and suspensions take effect immediately.
-- Admins can't change or delete their own account, and the last active database admin can't be removed except by the built-in admin.
-- The built-in admin (`ADMIN_EMAIL`) has no database record and no profile. Sessions issued before roles existed keep working until they expire.
+- Admins can't change or delete their own account, and the last active admin can't be removed.
+- Every account, admins included, is a MongoDB user. There is no environment-variable admin: `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `ADMIN_PASSWORD_HASH` are ignored.
 - Submissions are linked only by the verified session, never by email. Anonymous submissions made before an account existed are not shown under *My account*. They can still be followed with the tracking code.
 
 ### Donation lifecycle
@@ -79,9 +77,10 @@ Permissions are defined in [backend/rbac.js](backend/rbac.js). Routes check perm
 
 ### Deploying to Render
 
-1. In the Render service's **Environment**, set `MONGO_URL` (required), plus `SECRET_KEY` for sign-in, and `ADMIN_EMAIL` and `ADMIN_PASSWORD_HASH` for the built-in admin. Without `SECRET_KEY` the public site still works, but sign-in returns 503.
-2. In MongoDB Atlas, under **Network Access**, allow Render to connect (`0.0.0.0/0`, or Render's outbound IPs).
+1. In the Render service's **Environment**, set `MONGO_URL` (required), `SECRET_KEY` (required for sign-in) and `CLIENT_ORIGIN` (your frontend URL). Without `SECRET_KEY` the public site still works, but sign-in returns 503.
+2. In MongoDB Atlas, under **Network Access**, allow Render to connect (`0.0.0.0/0`, or Render's outbound IPs). If you skip this, startup fails with "Could not connect to any servers in your MongoDB Atlas cluster".
 3. Deploy. `GET /api/health` should return `{"status":"ok","db":"connected"}`.
+4. Create the first admin: register on the site, then on your own machine run `MONGO_URL='<same url>' node generate.js promote <email>` from `backend/`. Your IP must also be allowed in Atlas. Sign out and back in.
 
 The old public `GET /api/dashboard` has been removed because it exposed personal data without authentication.
 
