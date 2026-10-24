@@ -90,6 +90,14 @@ const connect = async (attempt = 1) => {
     await Promise.all([FoodRequest.init(), FoodDonation.init(), User.init()]);
     await backfillTrackingIds(FoodRequest, "REQ");
     await backfillTrackingIds(FoodDonation, "DON");
+    // Roles are often edited by hand in Atlas; report values that grant nothing.
+    const { ROLES } = require("./rbac");
+    const odd = await User.find({ role: { $nin: ROLES } }).select("email role").lean();
+    for (const u of odd) {
+      console.warn(`User ${u.email} has role ${JSON.stringify(u.role)}; valid roles are ${ROLES.join(", ")} (lowercase).`);
+    }
+    const admins = await User.countDocuments({ role: "admin", status: "active" });
+    console.log(`${admins} active admin account(s).` + (admins ? "" : " Promote one with `node generate.js promote <email>`."));
   } catch (err) {
     // Index builds and backfills are housekeeping; the API works without them.
     console.error("Database setup step failed (the API is still running):", err.message);

@@ -12,7 +12,7 @@ const userSchema = new mongoose.Schema(
     passwordHash: { type: String, required: true, select: false },
     phone: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
-    role: { type: String, enum: ROLES, default: "user", index: true },
+    role: { type: String, enum: ROLES, default: "user", lowercase: true, trim: true, index: true },
     status: { type: String, enum: STATUSES, default: "active", index: true },
     // Tokens issued before this moment are rejected (password change, role change, suspension).
     tokensValidAfter: { type: Date, default: () => new Date(0) },

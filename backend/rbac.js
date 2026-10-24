@@ -26,7 +26,13 @@ const PERMISSIONS = {
   admin: ADMIN_PERMISSIONS,
 };
 
-const permissionsFor = (role) => (Object.prototype.hasOwnProperty.call(PERMISSIONS, role) ? PERMISSIONS[role] : []);
+// Roles edited by hand in the database may carry stray case or spaces ("Admin ").
+const normalizeRole = (role) => (typeof role === "string" ? role.trim().toLowerCase() : "");
+
+const permissionsFor = (role) => {
+  const r = normalizeRole(role);
+  return Object.prototype.hasOwnProperty.call(PERMISSIONS, r) ? PERMISSIONS[r] : [];
+};
 const hasPermission = (role, permission) => permissionsFor(role).includes(permission);
 
 // Must run after authentication middleware has set req.user.
@@ -38,4 +44,4 @@ const requirePermission = (...required) => (req, res, next) => {
   next();
 };
 
-module.exports = { ROLES, PERMISSIONS, permissionsFor, hasPermission, requirePermission };
+module.exports = { ROLES, PERMISSIONS, normalizeRole, permissionsFor, hasPermission, requirePermission };

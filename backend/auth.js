@@ -4,7 +4,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const rateLimit = require("express-rate-limit");
 const User = require("./models/userModel");
-const { permissionsFor } = require("./rbac");
+const { normalizeRole, permissionsFor } = require("./rbac");
 const { rules, validate, str } = require("./utils/validate");
 
 const router = express.Router();
@@ -51,7 +51,7 @@ const toPublicUser = (u) => ({
   name: u.name || "",
   phone: u.phone || "",
   city: u.city || "",
-  role: u.role,
+  role: normalizeRole(u.role),
   // Always true now that every account is stored; kept so existing clients keep working.
   hasProfile: true,
   permissions: permissionsFor(u.role),
@@ -61,7 +61,7 @@ const toPublicUser = (u) => ({
 const sessionBody = (user, token) => {
   const body = { user: toPublicUser(user) };
   if (token) body.token = token;
-  if (user.role === "admin") body.admin = { email: user.email };
+  if (normalizeRole(user.role) === "admin") body.admin = { email: user.email };
   return body;
 };
 
@@ -137,7 +137,7 @@ const resolveUser = async (payload) => {
   const user = await User.findById(sub).lean();
   if (!user || user.status !== "active") return null;
   if (payload.iat < Math.floor(new Date(user.tokensValidAfter || 0).getTime() / 1000)) return null;
-  return { ...user, id: String(user._id) };
+  return { ...user, id: String(user._id), role: normalizeRole(user.role) };
 };
 
 const verify = (token) =>

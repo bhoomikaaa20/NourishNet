@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Navbar from "./Navbar";
 import Ourmission from "./Ourmission";
@@ -24,11 +24,25 @@ import { ToastProvider } from "./components/Toast";
 // and shows "no access" to signed-in accounts that lack the permission.
 // The server enforces the same permissions; this only keeps the UI honest.
 const RequirePermission = ({ permission, children }) => {
-  const { isLoggedIn, can, checking } = useAuth();
+  const { isLoggedIn, can, checking, refresh } = useAuth();
   const location = useLocation();
-  if (checking) return <div className="page-loading">Checking your session…</div>;
+  const allowed = isLoggedIn && can(permission);
+  // Before showing "no access", ask the server once: the role may have changed
+  // (e.g. just promoted to admin) since this tab signed in.
+  const [rechecked, setRechecked] = useState(null);
+  const needsRecheck = isLoggedIn && !checking && !allowed && rechecked !== location.pathname;
+  useEffect(() => {
+    if (!needsRecheck) return;
+    let active = true;
+    refresh().finally(() => active && setRechecked(location.pathname));
+    return () => {
+      active = false;
+    };
+  }, [needsRecheck, refresh, location.pathname]);
+
+  if (checking || needsRecheck) return <div className="page-loading">Checking your session…</div>;
   if (!isLoggedIn) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  return can(permission) ? children : <Forbidden />;
+  return allowed ? children : <Forbidden />;
 };
 
 const ScrollToTop = () => {

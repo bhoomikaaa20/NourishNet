@@ -32,14 +32,36 @@ export const AuthProvider = ({ children }) => {
     [applySession]
   );
 
+  // Re-reads the account from the server. Roles can change while someone is signed in
+  // (promoted on the dashboard or in the database), so the cached permissions must
+  // not be trusted for the whole session. Resolves with the current user or null.
+  const refresh = useCallback(async () => {
+    if (!tokenStore.get()) return null;
+    try {
+      const { data } = await api.get("/api/auth/me");
+      setUser(data.user);
+      return data.user;
+    } catch (e) {
+      // 401 already triggers logout via the session-expired event; keep the session on network errors.
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!tokenStore.get()) return;
-    api
-      .get("/api/auth/me", { headers: { Authorization: `Bearer ${tokenStore.get()}` } })
-      .then(({ data }) => setUser(data.user))
-      .catch(() => tokenStore.clear())
-      .finally(() => setChecking(false));
-  }, []);
+    refresh().finally(() => setChecking(false));
+  }, [refresh]);
+
+  // Pick up role changes when the user comes back to the tab.
+  useEffect(() => {
+    const onFocus = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refresh]);
 
   useEffect(() => {
     window.addEventListener("nourishnet:session-expired", logout);
@@ -61,8 +83,9 @@ export const AuthProvider = ({ children }) => {
       register,
       logout,
       applySession,
+      refresh,
     };
-  }, [user, checking, login, register, logout, applySession]);
+  }, [user, checking, login, register, logout, applySession, refresh]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
