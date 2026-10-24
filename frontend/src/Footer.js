@@ -1,131 +1,125 @@
 import React, { useState } from "react";
-import axios from "axios";
+import { Link } from "react-router-dom";
+import api, { parseError } from "./api";
 import stayconnect from "./images/stayconnect.webp";
-import "./footer.css";
+import { email as emailRule } from "./components/validators";
 
 const Footer = () => {
-  const [email, setEmail] = useState(""); // State to hold the email input
-  const [message, setMessage] = useState(""); // State to hold the success or error message
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState({ type: "", message: "" });
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
-    e.preventDefault(); // Prevent the default form submission behavior
+    e.preventDefault();
+    const problem = emailRule(email);
+    if (problem) {
+      setStatus({ type: "error", message: problem });
+      return;
+    }
 
+    setLoading(true);
     try {
-      const response = await axios.post(
-        "http://localhost:8087/api/connections",
-        { email }
-      ); // Change URL based on your backend configuration
-      if (response.status === 201) {
-        setMessage("Successfully subscribed!"); // Set success message
-        setEmail(""); // Clear the input field
-      } else {
-        setMessage("Failed to subscribe."); // Set error message
-      }
+      const { data } = await api.post("/api/connections", { email });
+      setStatus({ type: "success", message: data.message || "Successfully subscribed!" });
+      setEmail("");
     } catch (error) {
-      console.error("Error subscribing:", error);
-      setMessage("An error occurred while subscribing."); // Set error message
+      setStatus({ type: "error", message: parseError(error).message });
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div>
-      <div className="container">
-        <div className="content">
-          <div className="text-content">
-            <h1>Stay Connected!</h1>
-            <p>
-              Keep up on the latest needs, news, and notables from FeedForward
-              by joining our mailing list:
-            </p>
-            <form className="contact-form" onSubmit={handleSubmit}>
+    <footer>
+      <section className="newsletter">
+        <div className="newsletter-inner">
+          <div className="newsletter-text">
+            <h2>Stay Connected!</h2>
+            <p>Keep up on the latest needs, news, and notables from NourishNet by joining our mailing list.</p>
+            <form className="newsletter-form" onSubmit={handleSubmit} noValidate>
+              <label htmlFor="newsletter-email" className="sr-only">
+                Email address
+              </label>
               <input
+                id="newsletter-email"
                 type="email"
-                placeholder="Email"
+                placeholder="Your email address"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)} // Update email state on input change
-                required
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (status.message) setStatus({ type: "", message: "" });
+                }}
+                autoComplete="email"
               />
-              <button type="submit">Subscribe</button>
+              <button type="submit" className="btn btn-primary" disabled={loading}>
+                {loading ? "Subscribing…" : "Subscribe"}
+              </button>
             </form>
-            {message && <p className="subscription-message">{message}</p>}{" "}
-            {/* Display message after submission */}
+            {status.message && (
+              <p className={`newsletter-msg ${status.type}`} role={status.type === "error" ? "alert" : "status"}>
+                {status.message}
+              </p>
+            )}
           </div>
-          <div className="image-content">
-            <img src={stayconnect} alt="Stay Connected" />
-          </div>
+          <img src={stayconnect} alt="Stay Connected" />
         </div>
-      </div>
-      <footer className="footer-container">
-        <div className="footer-content">
-          <div className="footer-left">
-            <h3>FeedForward</h3>
+      </section>
+
+      <div className="footer">
+        <div className="footer-inner">
+          <div className="footer-about">
+            <h3>
+              <i className="fa-solid fa-leaf" aria-hidden="true" /> NourishNet
+            </h3>
             <p>
-              FeedForward is devoted to ending the cycle of hunger in the local
-              communities of northern Indiana by providing a food rescue
-              service.
+              NourishNet is devoted to ending the cycle of hunger in our local communities by providing a food rescue service.
             </p>
-            <div className="footer-social-icons">
-              <a href="https://facebook.com">
-                <i className="fab fa-facebook-f"></i>
+            <div className="social">
+              <a href="https://facebook.com" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
+                <i className="fab fa-facebook-f" aria-hidden="true" />
               </a>
-              <a href="https://twitter.com">
-                <i className="fab fa-twitter"></i>
+              <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
+                <i className="fab fa-twitter" aria-hidden="true" />
               </a>
-              <a href="https://linkedin.com">
-                <i className="fab fa-linkedin-in"></i>
+              <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
+                <i className="fab fa-linkedin-in" aria-hidden="true" />
               </a>
-              <a href="https://instagram.com">
-                <i className="fab fa-instagram"></i>
+              <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+                <i className="fab fa-instagram" aria-hidden="true" />
               </a>
             </div>
             <address>
-              Kormangla, Bangalore
+              Koramangala, Bangalore
               <br />
               (875) 725-2020
               <br />
               <a href="mailto:feedforward@gmail.com">feedforward@gmail.com</a>
             </address>
           </div>
-          <div className="footer-right">
-            <div className="footer-links-buttons">
-              <ul className="footer-links">
-                <li>
-                  <a href="/volunteer">Volunteer</a>
-                </li>
-                <li>
-                  <a href="/donate">Donate</a>
-                </li>
-                <li>
-                  <a href="/financial-sponsors">Financial Sponsors</a>
-                </li>
-                <li>
-                  <a href="/donate-food">Food Donors</a>
-                </li>
-                <li>
-                  <a href="/volunteers">Volunteers</a>
-                </li>
-                <li>
-                  <a href="/opt-out-preferences">Opt-out preferences</a>
-                </li>
-              </ul>
-              <div className="footer-buttons">
-                <a href="/join-cause">
-                  <button className="join-cause-button">Join the cause</button>
-                </a>
-                <a href="/volunteer">
-                  <button className="volunteer-button">
-                    Volunteer your time!
-                  </button>
-                </a>
-                <a href="/donate">
-                  <button className="donate-button">Make a donation!</button>
-                </a>
-              </div>
-            </div>
+
+          <nav className="footer-links" aria-label="Footer">
+            <h4>Explore</h4>
+            <ul>
+              <li><Link to="/find-food">Find Food</Link></li>
+              <li><Link to="/request-food">Request Food</Link></li>
+              <li><Link to="/donate-food">Donate Food</Link></li>
+              <li><Link to="/donate-money">Donate Money</Link></li>
+              <li><Link to="/volunteer">Volunteer</Link></li>
+              <li><Link to="/our-mission">Our Mission</Link></li>
+              <li><Link to="/track">Track a Submission</Link></li>
+              <li><Link to="/contact">Contact</Link></li>
+            </ul>
+          </nav>
+
+          <div className="footer-cta">
+            <h4>Get involved</h4>
+            <Link to="/donate-food" className="btn btn-accent">Make a donation</Link>
+            <Link to="/volunteer" className="btn btn-light">Volunteer your time</Link>
           </div>
         </div>
-      </footer>
-    </div>
+        <p className="copyright">© {new Date().getFullYear()} NourishNet. No neighbor hungry, no food wasted.</p>
+      </div>
+    </footer>
   );
 };
 

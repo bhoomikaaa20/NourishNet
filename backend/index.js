@@ -1,121 +1,43 @@
 require("dotenv").config();
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
 const mongoose = require("mongoose");
-const FoodRequest = require("./models/model"); // Assuming you have a model for food requests
-const FoodDonation = require("./models/donateModel"); // Assuming you have a model for food requests
-const Connections = require("./models/connectionsModel");
-const Contact = require("./models/contactModel"); // Assuming you have a model for contact forms
 
-const app = express();
+if (!process.env.MONGO_URL) {
+  console.error("Missing required environment variable MONGO_URL. See .env.example.");
+  process.exit(1);
+}
+// Without these the public site still works; only admin login is disabled.
+const adminMissing = ["SECRET_KEY", "ADMIN_EMAIL"].filter((k) => !process.env[k]);
+if (!process.env.ADMIN_PASSWORD_HASH && !process.env.ADMIN_PASSWORD) adminMissing.push("ADMIN_PASSWORD_HASH");
+if (adminMissing.length) {
+  console.warn(`Admin login disabled. Missing: ${adminMissing.join(", ")}. See .env.example.`);
+}
+
+const createApp = require("./app");
+const FoodRequest = require("./models/model");
+const FoodDonation = require("./models/donateModel");
+const { generateTrackingId } = require("./models/trackingId");
+
 const PORT = process.env.PORT || 8087;
 
-app.use(bodyParser.json());
-app.use(cors());
+// Records created before tracking existed get a code so they can be tracked too.
+const backfillTrackingIds = async (Model, prefix) => {
+  const legacy = await Model.find({ trackingId: { $exists: false } }).select("_id");
+  for (const { _id } of legacy) {
+    await Model.updateOne({ _id }, { $set: { trackingId: generateTrackingId(prefix) } });
+  }
+  if (legacy.length) console.log(`Backfilled ${legacy.length} ${prefix} tracking ids`);
+};
 
 mongoose
-  .connect(
-    "mongodb+srv://nourishNet:gzM60IMzFopWfo0H@clusternourishnet.x9e1r.mongodb.net/?retryWrites=true&w=majority&appName=ClusterNourishNet"
-  )
-  .then(() => console.log("Connected to MongoDB"))
-  .catch((err) => console.error("MongoDB connection error:", err));
-
-// Route for handling food requests
-app.post("/api/request-food", async (req, res) => {
-  const { name, contactNumber, email, urgency } = req.body;
-
-  try {
-    const newRequest = new FoodRequest({ name, contactNumber, email, urgency });
-    await newRequest.save();
-    res
-      .status(200)
-      .json({ message: "Request received and stored successfully" });
-  } catch (error) {
-    console.error("Error saving request:", error);
-    res.status(500).json({ message: "Failed to save request" });
-  }
-});
-
-app.post("/api/donate-food", async (req, res) => {
-  const { name, contactNumber, email, address, quantity, foodType } = req.body;
-
-  try {
-    // Create a new food donation with the updated fields
-    const newDonation = new FoodDonation({
-      name,
-      contactNumber,
-      email,
-      address,
-      quantity,
-      foodType, // Add the new foodType field
-    });
-
-    // Save the new donation to the database
-    await newDonation.save();
-
-    res
-      .status(200)
-      .json({ message: "Donation received and stored successfully" });
-  } catch (error) {
-    console.error("Error saving donation:", error);
-    res.status(500).json({ message: "Failed to save donation" });
-  }
-});
-
-// Route for handling contact form submissions
-app.post("/contact", async (req, res) => {
-  const { firstName, lastName, email, phone, comments } = req.body;
-
-  try {
-    const newContact = new Contact({
-      firstName,
-      lastName,
-      email,
-      phone,
-      comments,
-    });
-    await newContact.save();
-    res.status(200).json({ message: "Form submitted successfully!" });
-  } catch (error) {
-    console.error("Error saving contact form data:", error);
-    res.status(500).json({ message: "Failed to submit form" });
-  }
-});
-
-// Route for fetching dashboard data
-app.get("/api/dashboard", async (req, res) => {
-  try {
-    console.log("Fetching data from the database...");
-    const [requests, contacts, donations, connections] = await Promise.all([
-      FoodRequest.find().sort({ createdAt: -1 }),
-      Contact.find().sort({ createdAt: -1 }),
-      FoodDonation.find().sort({ createdAt: -1 }),
-      Connections.find().sort({ createdAt: -1 }),
-    ]);
-
-    res.json({ requests, contacts, donations, connections });
-  } catch (error) {
-    console.error("Error fetching data:", error);
-    res.status(500).json({ message: "Failed to fetch data" });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
-
-// POST request to add a new connection (email)
-app.post("/api/connections", async (req, res) => {
-  const { email } = req.body; // Extract email from request body
-
-  try {
-    // Create a new connection
-    const newConnection = new Connections({ email });
-    await newConnection.save();
-    res.status(201).json({ message: "Email subscribed successfully!" }); // Successful response
-  } catch (error) {
-    console.error("Error saving email:", error);
-    res.status(500).json({ message: "Failed to subscribe email." }); // Error response
-  }
-});
+  .connect(process.env.MONGO_URL, { serverSelectionTimeoutMS: 15000 })
+  .then(async () => {
+    console.log("Connected to MongoDB");
+    await Promise.all([FoodRequest.init(), FoodDonation.init()]);
+    await backfillTrackingIds(FoodRequest, "REQ");
+    await backfillTrackingIds(FoodDonation, "DON");
+    createApp().listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error("Startup failed (check MONGO_URL and Atlas network access):", err.message);
+    process.exit(1);
+  });
