@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const mongoose = require("mongoose");
 
 const publicRoutes = require("./routes/public");
 const adminRoutes = require("./routes/admin");
@@ -36,6 +37,15 @@ const createApp = () => {
       message: { message: "Too many requests. Please slow down." },
     })
   );
+
+  // While the database is unreachable, fail fast with 503 instead of letting each
+  // query wait for Mongoose's 10s buffer timeout and then return a generic 500.
+  // /api/health stays available so the outage is visible.
+  app.use((req, res, next) => {
+    if (mongoose.connection.readyState === 1 || req.path === "/api/health") return next();
+    res.set("Retry-After", "30");
+    res.status(503).json({ message: "The service is temporarily unavailable. Please try again in a minute." });
+  });
 
   app.use("/api/auth", authRoutes);
   app.use("/api/admin", adminRoutes);

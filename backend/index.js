@@ -42,8 +42,17 @@ const describeUrl = (url) => {
   }
 };
 
+// The driver's top-level message for Atlas is always the generic "IP whitelist" text;
+// the per-server errors underneath show what actually happened on the network.
+const underlyingErrors = (err) => {
+  const servers = err.reason && err.reason.servers;
+  if (!servers || typeof servers.values !== "function") return "";
+  const msgs = [...servers.values()].map((s) => s.error && s.error.message).filter(Boolean);
+  return [...new Set(msgs)].join(" | ");
+};
+
 const explain = (err) => {
-  const msg = err.message || String(err);
+  const msg = `${err.message || err} ${underlyingErrors(err)}`;
   if (/auth|bad auth|authentication/i.test(msg)) {
     return "Atlas rejected the username/password in MONGO_URL. Check the Atlas database user (URL-encode special characters in the password).";
   }
@@ -68,6 +77,8 @@ const connect = async (attempt = 1) => {
   } catch (err) {
     const delay = Math.min(60, 5 * attempt);
     console.error(`MongoDB connection failed: ${err.message}`);
+    const detail = underlyingErrors(err);
+    if (detail) console.error(`Underlying error: ${detail}`);
     console.error(explain(err));
     console.error(`Retrying in ${delay}s.`);
     setTimeout(() => connect(attempt + 1), delay * 1000);
