@@ -2,7 +2,7 @@ import axios from "axios";
 
 // Override in frontend/.env (REACT_APP_API_URL=http://localhost:8087) for local development.
 export const API_URL = (
-  process.env.REACT_APP_API_URL || "http://localhost:8087"
+  process.env.REACT_APP_API_URL || "https://nourishnet-2.onrender.com"
 ).replace(/\/$/, "");
 
 const TOKEN_KEY = "nourishnet_admin_token";
