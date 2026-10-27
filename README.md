@@ -10,7 +10,6 @@ Donors list surplus food, people in need find and reserve it, and a team of admi
 ![Node.js](https://img.shields.io/badge/Node.js-Express_4-339933?logo=node.js&logoColor=white)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)
 ![JWT](https://img.shields.io/badge/Auth-JWT_+_RBAC-000000?logo=jsonwebtokens&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-node:test_+_Jest-C21325)
 ![Deployment](https://img.shields.io/badge/Deployed-Render%20%2B%20Netlify-46E3B7?logo=render&logoColor=white)
 </div>
 
